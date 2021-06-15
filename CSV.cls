@@ -18,7 +18,7 @@ Public Function CSVFileToArray(FileName As String, Optional TrimText As Boolean 
     End If
 End Function
 
-Public Function ArrayToTextFile(FileName As String, ByRef SaveArray As Variant, Delimiter As String, Quotation As String, Optional TrimText As Boolean = True)
+Public Function ArrayToTextFile(FileName As String, ByRef SaveArray As Variant, Delimiter As String, Quotation As String, Optional TrimText As Boolean = True, Optional AlwaysAddQuotation As Boolean = False)
     If IsEmpty(SaveArray) Then Exit Function
 '------------------------------------------------------------------------------------
     Dim FileNum As Integer: FileNum = FreeFile
@@ -41,7 +41,7 @@ Public Function ArrayToTextFile(FileName As String, ByRef SaveArray As Variant, 
             TextValue = CStr(SaveArray(Row, Column))
             DelimiterFound = InStr(1, TextValue, Delimiter)
             ReplacedText = Replace(TextValue, Quotation, Quotation & Quotation)
-            If ReplacedText <> TextValue Or DelimiterFound Then
+            If ReplacedText <> TextValue Or DelimiterFound Or AlwaysAddQuotation Then
             '** If the Text in TextValue contatins the quotation mark then
             '   change them for double quotation, and closed between
             '   quotation marks
@@ -65,7 +65,7 @@ ForceClose:
     
 End Function
 
-Public Function TextFileToArray(FileName As String, Delimiter As String, Quotation As String, Optional TrimText As Long = True) As Variant
+Public Function TextFileToArray(FileName As String, Delimiter As String, Quotation As String, Optional TrimText As Boolean = True) As Variant
     Dim objCollection As Collection: Set objCollection = New Collection
     Dim FileNum As Integer
     Dim TextLine As String
