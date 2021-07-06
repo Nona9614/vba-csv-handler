@@ -11,6 +11,13 @@ Private Const CSV_QUOTATION As String = """"
 Private Const CSV_DELIMITER As String = ","
 Private InitialFileName As String
 Private InitialFolderName As String
+Private Const BOM_BIG_ENDIAN As Long = 65279        ' -> &HFEFF
+Private Const BOM_LITTLE_ENDIAN As Long = 65534     ' -> &HFFFE
+
+Public Enum Endianess
+    BigEndian
+    LittleEndian
+End Enum
 
 Public Function CSVFileToArray(FileName As String, Optional TrimText As Boolean = True) As Variant
     If Split(FileName, ".")(1) Like "csv" Then
@@ -18,22 +25,27 @@ Public Function CSVFileToArray(FileName As String, Optional TrimText As Boolean 
     End If
 End Function
 
-Public Function ArrayToTextFile(FileName As String, ByRef SaveArray As Variant, Delimiter As String, Quotation As String, Optional TrimText As Boolean = True, Optional AlwaysAddQuotation As Boolean = False)
+Public Function ArrayToTextFile(FileName As String, ByRef SaveArray As Variant, Delimiter As String, Quotation As String, Optional TrimText As Boolean = True, Optional AlwaysAddQuotation As Boolean = False, Optional Unicode As Boolean, Optional Endian As Endianess = BigEndian) As Boolean
     If IsEmpty(SaveArray) Then Exit Function
 '------------------------------------------------------------------------------------
-    Dim FileNum As Integer: FileNum = FreeFile
-    Dim TextLine
+    Dim FileNumber As Integer: FileNumber = FreeFile
+    Dim TextLine As String
+    Dim TextStream() As Byte
     Dim DelimiterFound As Boolean
     Dim TextValue As String
     Dim ReplacedText As String
+    Dim TextPosition As Long
     Dim Row As Long
     Dim Column As Long
     
 '------------------------------------------------------------------------------------
 '----------------------------START OF WRITING TEXT FILE------------------------------
 '------------------------------------------------------------------------------------
-    Open FileName For Output As #FileNum
-    On Error GoTo ForceClose
+    '** Cleans the file if it exists
+    Open FileName For Output As #FileNumber: Close #FileNumber
+    
+    Open FileName For Binary Access Write As #FileNumber
+    On Error GoTo CloseFunction
     
     For Row = LBound(SaveArray, 1) To UBound(SaveArray, 1)
         TextLine = ""
@@ -54,24 +66,52 @@ Public Function ArrayToTextFile(FileName As String, ByRef SaveArray As Variant, 
                 TextLine = TextLine & Delimiter & TextValue
             End If
         Next Column
-            Print #FileNum, TextLine
+        
+        If Unicode Then
+            If Row = 1 Then
+                Dim LeftValue As Long
+                Dim RightValue As Long
+                Select Case Endian
+                    Case Endianess.LittleEndian
+                        LeftValue = (BOM_LITTLE_ENDIAN And &HFF00) / CLng(&H100)
+                        RightValue = (BOM_LITTLE_ENDIAN And &HFF)
+                    Case Endianess.BigEndian
+                        LeftValue = (BOM_BIG_ENDIAN And &HFF00) / CLng(&H100)
+                        RightValue = (BOM_BIG_ENDIAN And &HFF)
+                    Case Else
+                        Err.Raise 1001, , "Invalid Endianess"
+                        Exit Function
+                End Select
+                TextLine = ChrW(BOM_BIG_ENDIAN) & TextLine
+            End If
+            TextLine = StrConv(TextLine & vbCrLf, vbUnicode)
+            TextStream = StrConv(TextLine, vbFromUnicode)
+        Else
+            TextStream = TextLine & vbCrLf
+        End If
+        
+        Put #FileNumber, , TextStream
+        
     Next Row
     
+    '** If everything succeed the function returns 'True'
+    ArrayToTextFile = True
+
 '------------------------------------------------------------------------------------
 '---------------------------FINISH OF WRITING TEXT FILE------------------------------
 '------------------------------------------------------------------------------------
-ForceClose:
-    Close #FileNum
+CloseFunction:
+    Close #FileNumber
+    If Not IsEmpty(TextStream) Then Erase TextStream
+    If Err.Number <> 0 Then Err.Raise Err.Number, Err.Source, Err.Description, Err.HelpFile, Err.HelpContext
     
 End Function
 
 Public Function TextFileToArray(FileName As String, Delimiter As String, Quotation As String, Optional TrimText As Boolean = True) As Variant
     Dim objCollection As Collection: Set objCollection = New Collection
-    Dim FileNum As Integer
+    Dim FileNumber As Integer
     Dim TextLine As String
     Dim BOM As Long
-    Const BigEndian As Long = 65279     ' -> &HFEFF
-    Const LittleEndian As Long = 65534  ' -> &HFFFE
     Dim MainString As String
     Dim SubString As String
     Dim ValueString As String
@@ -95,13 +135,13 @@ Public Function TextFileToArray(FileName As String, Delimiter As String, Quotati
 
 If Dir(FileName) = "" Or IsFileOpen(FileName) Then Exit Function
 
-FileNum = FreeFile()
-Open FileName For Input As #FileNum
+FileNumber = FreeFile()
+Open FileName For Input As #FileNumber
 
 On Error GoTo ForceClose
 Do
     '** Get the text of the next line in the Opened text file
-    Line Input #FileNum, TextLine
+    Line Input #FileNumber, TextLine
 
 '------------------------------------------------------------------------------------
 '-----------------------START OF DECOUPLING TEXT LINE--------------------------------
@@ -114,7 +154,7 @@ Do
     '** Removes BOM if found
     If Row = 1 Then
         BOM = CLng(AscW(Mid(TextLine, 1, 1))) * CLng(&H100) + CLng(AscW(Mid(TextLine, 2, 2)))
-        If BOM = LittleEndian Or BOM = BigEndian Then
+        If BOM = BOM_LITTLE_ENDIAN Or BOM = BOM_BIG_ENDIAN Then
             TextLine = Mid(TextLine, 3, Len(TextLine))
         End If
     End If
@@ -168,7 +208,7 @@ Do
                 CurrentSubChar = Mid(SubString, j, 1)
                 NextSubChar = Mid(SubString, j + 1, 1)
                 MainString = MainString & CurrentSubChar
-                If ((CurrentSubChar = Quotation) And (NextSubChar = Delimiter)) Or (CurrentSubChar = Quotation And j = Len(SubString)) Or (j = Len(SubString) And EOF(FileNum)) Then
+                If ((CurrentSubChar = Quotation) And (NextSubChar = Delimiter)) Or (CurrentSubChar = Quotation And j = Len(SubString)) Or (j = Len(SubString) And EOF(FileNumber)) Then
         '** If Current Substring loop finds the finish combination then now it will check
         '   backwards if sum of "Continuos" quotations marks found:
         '   1.- If is "Odd" number means the current substring is a real finish mark
@@ -204,11 +244,11 @@ Do
                 ValueString = MainString
             Else
         '** Else End of the line reached and not finish found
-                If Not (EOF(FileNum)) Then
+                If Not (EOF(FileNumber)) Then
         '   1.- If is not the end of the line, read next text line and loop again
                     MainString = MainString & vbCrLf
                     PreviousDelimiterPosition = 0
-                    Line Input #FileNum, TextLine
+                    Line Input #FileNumber, TextLine
                 Else
         '   2.- Else send all stored values in MainString to ValueString
                     If IsQuote And PreviousDelimiterPosition + j > Len(TextLine) Then
@@ -251,9 +291,9 @@ Do
 '----------------------FINISH OF DECOUPLING TEXT LINE--------------------------------
 '------------------------------------------------------------------------------------
 
-Loop Until EOF(FileNum)
+Loop Until EOF(FileNumber)
 ForceClose:
-Close #FileNum
+Close #FileNumber
 If Err.Number <> 0 Then MsgBox Err.Description, vbCritical, "Error " & Err.Number, Err.HelpFile, Err.HelpContext
 Dim FinalArray() As Variant
 ReDim FinalArray(1 To Rows, 1 To Columns)
@@ -327,13 +367,13 @@ Public Function GetFiles(ByRef SelectionCanceled As Boolean) As String()
 End Function
 
 Public Function IsFileOpen(FileName As String) As Boolean
-    Dim FileNum As Integer, ErrNum As Integer
+    Dim FileNumber As Integer, ErrNum As Integer
 
     On Error Resume Next   ' Turn error checking off.
-    FileNum = FreeFile()   ' Get a free file number.
+    FileNumber = FreeFile()   ' Get a free file number.
     ' Attempt to open the file and lock it.
-    Open FileName For Input Lock Read As #FileNum
-    Close FileNum          ' Close the file.
+    Open FileName For Input Lock Read As #FileNumber
+    Close FileNumber          ' Close the file.
     ErrNum = Err           ' Save the error number that occurred.
     On Error GoTo 0        ' Turn error checking back on.
 
