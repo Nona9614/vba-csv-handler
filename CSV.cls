@@ -69,6 +69,9 @@ Public Function TextFileToArray(FileName As String, Delimiter As String, Quotati
     Dim objCollection As Collection: Set objCollection = New Collection
     Dim FileNum As Integer
     Dim TextLine As String
+    Dim BOM As Long
+    Const BigEndian As Long = 65279     ' -> &HFEFF
+    Const LittleEndian As Long = 65534  ' -> &HFFFE
     Dim MainString As String
     Dim SubString As String
     Dim ValueString As String
@@ -107,6 +110,15 @@ Do
     SubString = TextLine
     Row = Row + 1
     Column = 0
+
+    '** Removes BOM if found
+    If Row = 1 Then
+        BOM = CLng(AscW(Mid(TextLine, 1, 1))) * CLng(&H100) + CLng(AscW(Mid(TextLine, 2, 2)))
+        If BOM = LittleEndian Or BOM = BigEndian Then
+            TextLine = Mid(TextLine, 3, Len(TextLine))
+        End If
+    End If
+
     If Row > Rows Then Rows = Row
     For i = 1 To Len(TextLine)
     If i > Len(TextLine) Then Exit For
